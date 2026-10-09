@@ -1,6 +1,9 @@
-node_modules/
 .env
-backend/uploads/
-backend/journal.db
-backend/.venv/
+node_modules/
 dist/
+backend/.venv/
+backend/__pycache__/
+backend/journal.db
+backend/*.db
+backend/uploads/
+*.log

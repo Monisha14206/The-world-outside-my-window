@@ -10,8 +10,8 @@ const api = async (url, opts) => { const r = await fetch(url, opts); const j = a
 const src = p => p.url || '/uploads/' + p.file
 
 export default function App() {
-  const [view, setView] = useState('home'), [list, setList] = useState([]), [cur, setCur] = useState(null), [status, setStatus] = useState(null)
-  const load = () => api('/api/journals').then(setList).catch(() => {})
+  const [view, setView] = useState('home'), [list, setList] = useState([]), [cur, setCur] = useState(null), [status, setStatus] = useState(null), [loadErr, setLoadErr] = useState('')
+  const load = () => api('/api/journals').then(l => { setList(l); setLoadErr('') }).catch(() => setLoadErr("Can't reach the journal backend. Start it with: python app.py (see README)."))
   useEffect(() => { load(); api('/api/health').then(setStatus).catch(() => setStatus({ ollama: false, hint: 'Backend is not running. Start it with: python app.py' })) }, [])
   const go = (v, e) => { setCur(e || null); setView(v); window.scrollTo(0, 0) }
   const write = seed => go('write', { ...blank(), ...seed })
@@ -22,7 +22,7 @@ export default function App() {
     <main>
       {view === 'home' && <Home write={() => write()} lib={() => go('library')} status={status}/>}
       {view === 'write' && <Editor key={cur?.id || 'new'} init={cur} status={status} done={e => { load(); go('entry', e) }}/>}
-      {view === 'library' && <Library list={list} open={e => go('entry', e)} write={() => write()}/>}
+      {view === 'library' && <Library err={loadErr} list={list} open={e => go('entry', e)} write={() => write()}/>}
       {view === 'entry' && cur && <Entry e={cur} edit={() => go('write', cur)} gone={() => { load(); go('library') }} reload={x => setCur(x)} refresh={load}/>}
       {view === 'explore' && <Explore start={p => write({ title: '', notes: 'Today\'s outdoor prompt: ' + p + '\n\n' })}/>}
     </main></>
@@ -97,10 +97,10 @@ function Editor({ init, status, done }) {
     {f.story && <><label htmlFor="s">Your story — edit freely before saving</label><textarea id="s" value={f.story} onChange={e => set('story', e.target.value)}/>
       <label htmlFor="fe">How I felt</label><input id="fe" value={f.feelings} onChange={e => set('feelings', e.target.value)}/>
       <label htmlFor="dt">Little things to remember (one per line)</label><textarea id="dt" style={{ minHeight: 80, fontSize: '1rem' }} value={f.details.join('\n')} onChange={e => set('details', e.target.value.split('\n'))}/></>}
-    <div className="bar"><button className="pri" disabled={!!busy} onClick={save}>{busy === 'save' ? 'Saving…' : 'Save memory'}</button></div></section>
+    <div className="bar"><button className="pri" disabled={!!busy} onClick={save}>{busy === 'save' ? 'Saving…' : 'Save memory'}</button><button onClick={() => window.history.go(0)}>Cancel</button></div></section>
 }
 
-function Library({ list, open, write }) {
+function Library({ list, open, write, err }) {
   const [q, setQ] = useState(''), [mood, setMood] = useState(''), [act, setAct] = useState('')
   const shown = list.filter(e => (!q || JSON.stringify([e.title, e.places, e.notes, e.story, e.date]).toLowerCase().includes(q.toLowerCase())) && (!mood || e.emotions?.includes(mood)) && (!act || e.activity === act))
   return <section><h2>Your life, collected in little moments.</h2>
@@ -108,17 +108,19 @@ function Library({ list, open, write }) {
     <div className="row"><div><label htmlFor="q"><Search size={14}/> Search</label><input id="q" value={q} onChange={e => setQ(e.target.value)}/></div>
       <div><label htmlFor="m">Mood</label><select id="m" value={mood} onChange={e => setMood(e.target.value)}><option value="">Any</option>{MOODS.map(m => <option key={m}>{m}</option>)}</select></div>
       <div><label htmlFor="ac">Activity</label><select id="ac" value={act} onChange={e => setAct(e.target.value)}><option value="">Any</option>{ACT.map(a => <option key={a}>{a}</option>)}</select></div></div>
-    {!list.length ? <div className="band"><h3>Nothing here yet</h3><p>Your first memory can be as small as a ten-minute walk. Go outside, then come back and write it down.</p></div>
-      : !shown.length ? <p>No memories match those filters.</p> : <div className="grid" style={{ marginTop: '1.5rem' }}>{shown.map(e => <article className="card" key={e.id} tabIndex={0} onKeyDown={x => x.key === 'Enter' && open(e)} onClick={() => open(e)}>
-        {e.photos[0] ? <img src={src(e.photos[0])} alt=""/> : <div className="ph"/>}<h3>{e.favorite && <Heart size={16} fill="#C47C5A" stroke="#C47C5A"/>} {e.title || 'Untitled day'}</h3>
+    {err && <div className="err" role="alert">{err}</div>}
+    {!list.length && !err ? <div className="band"><h3>Nothing here yet</h3><p>Your first memory can be as small as a ten-minute walk. Go outside, then come back and write it down.</p></div>
+      : !shown.length && list.length ? <p>No memories match those filters.</p> : <div className="grid" style={{ marginTop: '1.5rem' }}>{shown.map(e => <article className="card" key={e.id} tabIndex={0} onKeyDown={x => x.key === 'Enter' && open(e)} onClick={() => open(e)}>
+        {e.photos[0] ? <img src={src(e.photos[0])} alt="" onError={x => x.target.style.visibility = 'hidden'}/> : <div className="ph"/>}<h3>{e.favorite && <Heart size={16} fill="#C47C5A" stroke="#C47C5A"/>} {e.title || 'Untitled day'}</h3>
         <p className="hand">{e.date}{e.places && ' — ' + e.places}</p><p>{(e.story || e.notes).slice(0, 120)}…</p></article>)}</div>}</section>
 }
 
 function Entry({ e, edit, gone, reload, refresh }) {
-  const fav = async () => { const fd = new FormData(); const d = { ...e, favorite: !e.favorite }; delete d.id; fd.append('data', JSON.stringify(d)); reload(await api('/api/journals/' + e.id, { method: 'PUT', body: fd })); refresh() }
-  const del = async () => { if (confirm('Delete this memory and its photos?')) { await api('/api/journals/' + e.id, { method: 'DELETE' }); gone() } }
-  return <article><p className="hand">{e.date}{e.places && ' — ' + e.places}</p><h1 style={{ fontSize: '3rem' }}>{e.title || 'Untitled day'}</h1>
-    <div className="polaroids">{e.photos.map(p => <figure className="pol" key={p.file} style={{ margin: 0 }}><img src={src(p)} alt={p.caption || 'Journal photo'}/><figcaption className="hand">{p.caption}</figcaption></figure>)}</div>
+  const [msg, setMsg] = useState('')
+  const fav = async () => { try { const fd = new FormData(); const d = { ...e, favorite: !e.favorite }; delete d.id; fd.append('data', JSON.stringify(d)); reload(await api('/api/journals/' + e.id, { method: 'PUT', body: fd })); refresh() } catch (x) { setMsg(x.message) } }
+  const del = async () => { if (!confirm('Delete this memory and its photos? This cannot be undone.')) return; try { await api('/api/journals/' + e.id, { method: 'DELETE' }); gone() } catch (x) { setMsg(x.message) } }
+  return <article>{msg && <div className="err" role="alert">{msg}</div>}<p className="hand">{e.date}{e.places && ' — ' + e.places}</p><h1 style={{ fontSize: '3rem' }}>{e.title || 'Untitled day'}</h1>
+    <div className="polaroids">{e.photos.map(p => <figure className="pol" key={p.file} style={{ margin: 0 }}><img src={src(p)} alt={p.caption || 'Journal photo'} onError={x => { x.target.alt = 'Photo file is missing'; x.target.style.opacity = .3 }}/><figcaption className="hand">{p.caption}</figcaption></figure>)}</div>
     <p className="story">{e.story || e.notes}</p>
     {e.feelings && <><h3>How I felt</h3><p>{e.feelings}</p></>}{e.emotions?.length > 0 && <p className="hand">{e.emotions.join(', ')}</p>}
     {e.details?.filter(Boolean).length > 0 && <><h3>Little things I want to remember</h3><ul>{e.details.filter(Boolean).map((d, i) => <li key={i}>{d}</li>)}</ul></>}
